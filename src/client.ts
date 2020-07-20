@@ -68,6 +68,8 @@ export interface ClientOptions {
   connectionCallback?: (error: Error[], result?: any) => void;
   lazy?: boolean;
   inactivityTimeout?: number;
+  minHandshakeTimeout?: number;
+  maxHandshakeTimeout?: number;
 }
 
 export class SubscriptionClient {
@@ -111,6 +113,8 @@ export class SubscriptionClient {
       reconnectionAttempts = Infinity,
       lazy = false,
       inactivityTimeout = 0,
+      minHandshakeTimeout = 100,
+      maxHandshakeTimeout = 10000,
     } = (options || {});
 
     this.wsImpl = webSocketImpl || NativeWebSocket;
@@ -131,11 +135,11 @@ export class SubscriptionClient {
     this.lazy = !!lazy;
     this.inactivityTimeout = inactivityTimeout;
     this.closedByUser = false;
-    this.backoff = new Backoff({ jitter: 0.5 });
+    this.backoff = new Backoff({ jitter: 0.5, min: minHandshakeTimeout, max: maxHandshakeTimeout });
     this.eventEmitter = new EventEmitter();
     this.middlewares = [];
     this.client = null;
-    this.maxConnectTimeGenerator = this.createMaxConnectTimeGenerator();
+    this.maxConnectTimeGenerator = this.createMaxConnectTimeGenerator(minHandshakeTimeout, maxHandshakeTimeout);
     this.connectionParams = this.getConnectionParams(connectionParams);
 
     if (!this.lazy) {
@@ -364,10 +368,7 @@ export class SubscriptionClient {
     return observerOrNext;
   }
 
-  private createMaxConnectTimeGenerator() {
-    const minValue = 1000;
-    const maxValue = this.wsTimeout;
-
+  private createMaxConnectTimeGenerator(minValue, maxValue) {
     return new Backoff({
       min: minValue,
       max: maxValue,
