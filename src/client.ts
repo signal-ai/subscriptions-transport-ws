@@ -368,7 +368,7 @@ export class SubscriptionClient {
     return observerOrNext;
   }
 
-  private createMaxConnectTimeGenerator(minValue, maxValue) {
+  private createMaxConnectTimeGenerator(minValue: number, maxValue: number) {
     return new Backoff({
       min: minValue,
       max: maxValue,
