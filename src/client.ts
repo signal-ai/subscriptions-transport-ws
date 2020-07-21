@@ -518,6 +518,7 @@ export class SubscriptionClient {
     }
 
     if (!this.reconnecting) {
+      console.warn('keep alive not received. Closing connection');
       this.close(false, true);
     }
   }
@@ -566,6 +567,7 @@ export class SubscriptionClient {
     this.client.onerror = (err: Error) => {
       // Capture and ignore errors to prevent unhandled exceptions, wait for
       // onclose to fire before attempting a reconnect.
+      console.warn('error from websocket', err)
       this.eventEmitter.emit('error', err);
     };
 

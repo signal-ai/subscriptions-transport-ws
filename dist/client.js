@@ -419,6 +419,7 @@ var SubscriptionClient = (function () {
             return;
         }
         if (!this.reconnecting) {
+            console.warn('keep alive not received. Closing connection');
             this.close(false, true);
         }
     };
@@ -469,6 +470,7 @@ var SubscriptionClient = (function () {
             }
         };
         this.client.onerror = function (err) {
+            console.warn('error from websocket', err);
             _this.eventEmitter.emit('error', err);
         };
         this.client.onmessage = function (_a) {
