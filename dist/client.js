@@ -470,7 +470,7 @@ var SubscriptionClient = (function () {
             }
         };
         this.client.onerror = function (err) {
-            console.warn('error from websocket', err);
+            console.warn('error from websocket', JSON.stringify(err));
             _this.eventEmitter.emit('error', err);
         };
         this.client.onmessage = function (_a) {
