@@ -93,6 +93,15 @@ export interface ServerOptions {
 
 const isWebSocketServer = (socket: any) => socket.on;
 
+function noop() {
+  console.log('sending ping')
+}
+
+function heartbeat() {
+  console.log('received pon')
+}
+
+
 export class SubscriptionServer {
   private onOperation: Function;
   private onOperationComplete: Function;
@@ -109,6 +118,7 @@ export class SubscriptionServer {
   private specifiedRules:
     Array<(context: ValidationContext) => any> |
     ReadonlyArray<any>;
+
 
   public static create(options: ServerOptions, socketOptionsOrServer: WebSocket.ServerOptions | WebSocket.Server) {
     return new SubscriptionServer(options, socketOptionsOrServer);
@@ -136,6 +146,7 @@ export class SubscriptionServer {
     }
 
     const connectionHandler = ((socket: WebSocket, request: IncomingMessage) => {
+      socket.on('pong', heartbeat);
       // Add `upgradeReq` to the socket object to support old API, without creating a memory leak
       // See: https://github.com/websockets/ws/pull/1099
       (socket as any).upgradeReq = request;
@@ -445,6 +456,7 @@ export class SubscriptionServer {
   }
 
   private sendKeepAlive(connectionContext: ConnectionContext): void {
+    connectionContext.socket.ping(noop);
     if (connectionContext.isLegacy) {
       this.sendMessage(connectionContext, undefined, MessageTypes.KEEP_ALIVE, undefined);
     } else {

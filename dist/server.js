@@ -11,6 +11,12 @@ var iterall_1 = require("iterall");
 var is_subscriptions_1 = require("./utils/is-subscriptions");
 var parse_legacy_protocol_1 = require("./legacy/parse-legacy-protocol");
 var isWebSocketServer = function (socket) { return socket.on; };
+function noop() {
+    console.log('sending ping');
+}
+function heartbeat() {
+    console.log('received pon');
+}
 var SubscriptionServer = (function () {
     function SubscriptionServer(options, socketOptionsOrServer) {
         var _this = this;
@@ -29,6 +35,7 @@ var SubscriptionServer = (function () {
             this.wsServer = new WebSocket.Server(socketOptionsOrServer || {});
         }
         var connectionHandler = (function (socket, request) {
+            socket.on('pong', heartbeat);
             socket.upgradeReq = request;
             if (socket.protocol === undefined ||
                 (socket.protocol.indexOf(protocol_1.GRAPHQL_WS) === -1 && socket.protocol.indexOf(protocol_1.GRAPHQL_SUBSCRIPTIONS) === -1)) {
@@ -266,6 +273,7 @@ var SubscriptionServer = (function () {
         };
     };
     SubscriptionServer.prototype.sendKeepAlive = function (connectionContext) {
+        connectionContext.socket.ping(noop);
         if (connectionContext.isLegacy) {
             this.sendMessage(connectionContext, undefined, message_types_1.default.KEEP_ALIVE, undefined);
         }
