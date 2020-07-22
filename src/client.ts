@@ -558,7 +558,8 @@ export class SubscriptionClient {
       }
     };
 
-    this.client.onclose = () => {
+    this.client.onclose = (closeEvent: any) => {
+      console.warn('socket closed with code', closeEvent.code);
       if (!this.closedByUser) {
         this.close(false, false);
       }

@@ -464,7 +464,8 @@ var SubscriptionClient = (function () {
                 }
             });
         }); };
-        this.client.onclose = function () {
+        this.client.onclose = function (closeEvent) {
+            console.warn('socket closed with code', closeEvent.code);
             if (!_this.closedByUser) {
                 _this.close(false, false);
             }
