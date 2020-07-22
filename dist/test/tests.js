@@ -56,7 +56,6 @@ var iterall_1 = require("iterall");
 var TEST_PORT = 4953;
 var KEEP_ALIVE_TEST_PORT = TEST_PORT + 1;
 var DELAYED_TEST_PORT = TEST_PORT + 2;
-var RAW_TEST_PORT = TEST_PORT + 4;
 var EVENTS_TEST_PORT = TEST_PORT + 5;
 var ONCONNECT_ERROR_TEST_PORT = TEST_PORT + 6;
 var ERROR_TEST_PORT = TEST_PORT + 7;
@@ -231,11 +230,14 @@ new server_1.SubscriptionServer(Object.assign({}, options, {
         });
     },
 }), { server: httpServerWithDelay });
-var httpServerRaw = http_1.createServer(notFoundRequestListener);
-httpServerRaw.listen(RAW_TEST_PORT);
 describe('Client', function () {
+    var httpServerRaw;
     var wsServer;
+    var rawTestPort;
     beforeEach(function () {
+        httpServerRaw = http_1.createServer(notFoundRequestListener);
+        httpServerRaw.listen();
+        rawTestPort = httpServerRaw.address().port;
         wsServer = new WebSocket.Server({
             server: httpServerRaw,
         });
@@ -244,16 +246,21 @@ describe('Client', function () {
         if (wsServer) {
             wsServer.close();
         }
+        if (httpServerRaw) {
+            httpServerRaw.close();
+        }
     });
     it('should send GQL_CONNECTION_INIT message when creating the connection', function (done) {
+        var client;
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
                 chai_1.expect(parsedMessage.type).to.equals(message_types_1.default.GQL_CONNECTION_INIT);
+                client.close();
                 done();
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
     });
     it('should subscribe once after reconnect', function (done) {
         var isClientReconnected = false;
@@ -269,12 +276,15 @@ describe('Client', function () {
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
-                if (parsedMessage.type === message_types_1.default.GQL_START) {
+                if (parsedMessage.type === message_types_1.default.GQL_CONNECTION_INIT) {
+                    connection.send(JSON.stringify({ type: message_types_1.default.GQL_CONNECTION_ACK, payload: {} }));
+                }
+                else if (parsedMessage.type === message_types_1.default.GQL_START) {
                     subscriptionsCount++;
                 }
             });
         });
-        var client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             reconnect: true,
             reconnectionAttempts: 1,
         });
@@ -283,13 +293,14 @@ describe('Client', function () {
         }).subscribe({});
         setTimeout(function () {
             chai_1.expect(subscriptionsCount).to.be.equal(1);
+            client.close();
             done();
         }, 1500);
     });
     it('should send GQL_CONNECTION_INIT message first, then the GQL_START message', function (done) {
         var initReceived = false;
         var sub;
-        var client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
@@ -306,6 +317,7 @@ describe('Client', function () {
                     else {
                         done(new Error('did not get subscription'));
                     }
+                    client.close();
                 }
             });
         });
@@ -317,6 +329,7 @@ describe('Client', function () {
         var client = new client_1.SubscriptionClient("ws://localhost:" + TEST_PORT + "/");
         var unregister = client.onConnected(function () {
             unregister();
+            client.close();
             done();
         });
     });
@@ -328,6 +341,7 @@ describe('Client', function () {
         });
         var unregister = client.onDisconnected(function () {
             unregister();
+            client.close();
             done();
         });
     });
@@ -352,6 +366,7 @@ describe('Client', function () {
             unregisterOnConnecting();
             unregister();
             chai_1.expect(onConnectingSpy.called).to.equal(true);
+            client.close();
             done();
         });
     });
@@ -363,6 +378,7 @@ describe('Client', function () {
             unregisterOnConnecting();
             unregisterOnConnected();
             chai_1.expect(onConnectedSpy.called).to.equal(false);
+            subscriptionsClient.close();
             done();
         });
     });
@@ -374,6 +390,7 @@ describe('Client', function () {
         });
         var unregister = client.onDisconnected(function () {
             unregister();
+            client.close();
             done();
         });
     });
@@ -408,6 +425,7 @@ describe('Client', function () {
             unregisterOnReconnecting();
             unregisterOnReconnected();
             chai_1.expect(onReconnectedSpy.called).to.equal(false);
+            subscriptionsClient.close();
             done();
         });
     });
@@ -424,6 +442,7 @@ describe('Client', function () {
             error: function (error) {
                 client.close();
                 chai_1.expect(error.message).to.be.equal('Must provide a query.');
+                client.close();
                 done();
             },
         });
@@ -468,7 +487,7 @@ describe('Client', function () {
                 }
             });
         });
-        var client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
         client.request({
             query: "subscription useInfo($id: String) {\n          user(id: $id) {\n            id\n            name\n          }\n        }",
             operationName: 'useInfo',
@@ -479,6 +498,7 @@ describe('Client', function () {
             next: function (result) {
                 chai_1.expect(result.data).to.have.property('some');
                 chai_1.expect(result.errors).to.be.lengthOf(1);
+                client.close();
                 done();
             },
         });
@@ -487,14 +507,16 @@ describe('Client', function () {
         var connectionParams = {
             test: true,
         };
+        var client;
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
                 chai_1.expect(JSON.stringify(parsedMessage.payload)).to.equal(JSON.stringify(connectionParams));
+                client.close();
                 done();
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             connectionParams: connectionParams,
         });
     });
@@ -502,14 +524,16 @@ describe('Client', function () {
         var connectionParams = {
             test: true,
         };
+        var client;
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
                 chai_1.expect(JSON.stringify(parsedMessage.payload)).to.equal(JSON.stringify(connectionParams));
+                client.close();
                 done();
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             connectionParams: new Promise(function (resolve) {
                 setTimeout(function () {
                     resolve(connectionParams);
@@ -517,18 +541,88 @@ describe('Client', function () {
             }),
         });
     });
+    it('waits for connection ack on reconnect', function (done) {
+        var firstConnection = null;
+        var acked = false;
+        var started = false;
+        wsServer.on('connection', function (connection) {
+            if (firstConnection === null) {
+                firstConnection = connection;
+            }
+            connection.on('message', function (message) {
+                var parsedMessage = JSON.parse(message);
+                if (parsedMessage.type === message_types_1.default.GQL_CONNECTION_INIT) {
+                    if (connection === firstConnection) {
+                        connection.close();
+                    }
+                    else {
+                        acked = true;
+                        connection.send(JSON.stringify({ type: message_types_1.default.GQL_CONNECTION_ACK, payload: {} }));
+                    }
+                }
+                else if (!started) {
+                    started = true;
+                    chai_1.expect(parsedMessage.type).to.equal(message_types_1.default.GQL_START);
+                    chai_1.expect(acked).to.be.true;
+                    done();
+                }
+            });
+        });
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
+            reconnect: true,
+        });
+        client.request({
+            query: "subscription useInfo {\n        user(id: 3) {\n          id\n          name\n        }\n      }",
+        }).subscribe({});
+    });
+    it('waits for acks for messages queued between reconnects', function (done) {
+        var connections = 0;
+        wsServer.on('connection', function (connection) {
+            connections += 1;
+            var connectionId = connections;
+            var acked = false;
+            connection.on('message', function (message) {
+                var parsedMessage = JSON.parse(message);
+                if (parsedMessage.type === message_types_1.default.GQL_CONNECTION_INIT) {
+                    setTimeout(function () {
+                        connection.send(JSON.stringify({ type: message_types_1.default.GQL_CONNECTION_ACK, payload: {} }));
+                        acked = true;
+                    }, 100);
+                }
+                else if (parsedMessage.type === message_types_1.default.GQL_START) {
+                    chai_1.expect(acked).to.be.true;
+                    if (connectionId === 1) {
+                        connection.close();
+                    }
+                    else {
+                        done();
+                    }
+                }
+            });
+        });
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
+            reconnect: true,
+        });
+        setTimeout(function () {
+            client.request({
+                query: "subscription useInfo {\n          user(id: 3) {\n            id\n            name\n          }\n        }",
+            }).subscribe({});
+        }, 50);
+    });
     it('should send connectionParams as a function which returns a promise along with init message', function (done) {
         var connectionParams = {
             test: true,
         };
+        var client;
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
                 chai_1.expect(JSON.stringify(parsedMessage.payload)).to.equal(JSON.stringify(connectionParams));
+                client.close();
                 done();
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             connectionParams: new Promise(function (resolve) {
                 setTimeout(function () {
                     resolve(connectionParams);
@@ -538,14 +632,16 @@ describe('Client', function () {
     });
     it('should catch errors in connectionParams which came from a promise', function (done) {
         var error = 'foo';
+        var client;
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
                 chai_1.expect(parsedMessage.payload).to.equal(error);
+                client.close();
                 done();
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             connectionParams: new Promise(function (_, reject) {
                 setTimeout(function () {
                     reject(error);
@@ -585,13 +681,18 @@ describe('Client', function () {
                         chai_1.assert.equal(spyApplyMiddlewareFunction.called, true);
                         chai_1.assert.equal(spyApplyMiddlewareAsyncContents.called, true);
                     }
+                    client3.close();
                     done();
                 }
                 catch (e) {
+                    client3.close();
                     done(e);
                 }
             },
-            error: function (e) { return done(e); },
+            error: function (e) {
+                client3.close();
+                done(e);
+            },
         });
         setTimeout(function () {
             testPubsub.publish('user', {});
@@ -606,9 +707,10 @@ describe('Client', function () {
                 }));
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             connectionCallback: function (error) {
                 chai_1.expect(error.message).to.equals('test error');
+                client.close();
                 done();
             },
         });
@@ -624,12 +726,13 @@ describe('Client', function () {
                     connection.close();
                     setTimeout(function () {
                         chai_1.expect(client.status).to.equals(WebSocket.CLOSED);
+                        client.close();
                         done();
                     }, 500);
                 });
             });
         });
-        client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
     });
     it('should handle correctly GQL_CONNECTION_ACK message', function (done) {
         wsServer.on('connection', function (connection) {
@@ -637,9 +740,10 @@ describe('Client', function () {
                 connection.send(JSON.stringify({ type: message_types_1.default.GQL_CONNECTION_ACK }));
             });
         });
-        new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             connectionCallback: function (error) {
                 chai_1.expect(error).to.equals(undefined);
+                client.close();
                 done();
             },
         });
@@ -671,24 +775,6 @@ describe('Client', function () {
             }, 100);
         });
     });
-    it('queues messages while websocket is still connecting', function (done) {
-        var client = new client_1.SubscriptionClient("ws://localhost:" + TEST_PORT + "/");
-        var sub = client.request({
-            query: "subscription useInfo($id: String) {\n        user(id: $id) {\n          id\n          name\n        }\n      }",
-            operationName: 'useInfo',
-            variables: {
-                id: 3,
-            },
-        }).subscribe({});
-        client.onConnecting(function () {
-            chai_1.expect(client.unsentMessagesQueue.length).to.equals(1);
-            sub.unsubscribe();
-            setTimeout(function () {
-                chai_1.expect(client.unsentMessagesQueue.length).to.equals(0);
-                done();
-            }, 100);
-        });
-    });
     it('should call error handler when graphql result has errors', function (done) {
         var client = new client_1.SubscriptionClient("ws://localhost:" + TEST_PORT + "/");
         setTimeout(function () {
@@ -699,6 +785,7 @@ describe('Client', function () {
                 next: function (result) {
                     if (result.errors.length) {
                         client.unsubscribeAll();
+                        client.close();
                         done();
                         return;
                     }
@@ -723,6 +810,7 @@ describe('Client', function () {
                 next: function (result) {
                     if (result.errors.length) {
                         chai_1.expect(result.errors[0].message).to.equals('Cannot query field "invalid" on type "Subscription".');
+                        client.close();
                         done();
                     }
                     else {
@@ -736,7 +824,10 @@ describe('Client', function () {
         wsServer.on('connection', function (connection) {
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
-                if (parsedMessage.type === message_types_1.default.GQL_START) {
+                if (parsedMessage.type === message_types_1.default.GQL_CONNECTION_INIT) {
+                    connection.send(JSON.stringify({ type: message_types_1.default.GQL_CONNECTION_ACK, payload: {} }));
+                }
+                else if (parsedMessage.type === message_types_1.default.GQL_START) {
                     connection.send(JSON.stringify({
                         type: message_types_1.default.GQL_ERROR,
                         id: parsedMessage.id,
@@ -745,7 +836,7 @@ describe('Client', function () {
                 }
             });
         });
-        var client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
         client.request({
             query: "\n        subscription useInfo{\n          invalid\n        }\n      ",
             variables: {},
@@ -753,12 +844,13 @@ describe('Client', function () {
             next: function () { return chai_1.assert(false); },
             error: function (error) {
                 chai_1.expect(error.message).to.equals(errorMessage);
+                client.close();
                 done();
             },
         });
     }
     it('should not connect until subscribe is called if lazy mode', function (done) {
-        var client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             lazy: true,
         });
         chai_1.expect(client.client).to.be.null;
@@ -769,7 +861,10 @@ describe('Client', function () {
                 id: 3,
             },
         }).subscribe({
-            error: function (e) { return done(e); },
+            error: function (e) {
+                client.close();
+                done(e);
+            },
         });
         var isDone = false;
         wsServer.on('connection', function (connection) {
@@ -779,9 +874,11 @@ describe('Client', function () {
                     try {
                         chai_1.expect(client.client).to.not.be.null;
                         sub.unsubscribe();
+                        client.close();
                         done();
                     }
                     catch (e) {
+                        client.close();
                         done(e);
                     }
                 }
@@ -792,7 +889,7 @@ describe('Client', function () {
         var connectionParams = sinon.spy(function () { return ({
             foo: 'bar',
         }); });
-        var client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             lazy: true,
             connectionParams: connectionParams,
         });
@@ -809,9 +906,11 @@ describe('Client', function () {
                         chai_1.expect(parsedMessage.payload).to.eql({
                             foo: 'bar',
                         });
+                        client.close();
                         done();
                     }
                     catch (e) {
+                        client.close();
                         done(e);
                     }
                 }
@@ -850,10 +949,11 @@ describe('Client', function () {
             }
             else {
                 chai_1.expect(client.client).to.not.be.equal(originalClient);
+                client.close();
                 done();
             }
         });
-        client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", { reconnect: true });
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", { reconnect: true });
         originalClient = client.client;
     });
     it('should resubscribe after reconnect', function (done) {
@@ -864,18 +964,22 @@ describe('Client', function () {
             connections += 1;
             connection.on('message', function (message) {
                 var parsedMessage = JSON.parse(message);
-                if (parsedMessage.type === message_types_1.default.GQL_START) {
+                if (parsedMessage.type === message_types_1.default.GQL_CONNECTION_INIT) {
+                    connection.send(JSON.stringify({ type: message_types_1.default.GQL_CONNECTION_ACK, payload: {} }));
+                }
+                else if (parsedMessage.type === message_types_1.default.GQL_START) {
                     if (connections === 1) {
                         client.client.close();
                     }
                     else {
                         sub.unsubscribe();
+                        client.close();
                         done();
                     }
                 }
             });
         });
-        client = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", { reconnect: true });
+        client = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", { reconnect: true });
         sub = client.request({
             query: "\n        subscription useInfo{\n          invalid\n        }\n      ",
             variables: {},
@@ -905,7 +1009,7 @@ describe('Client', function () {
             connection.close();
         });
         var errorCount = 0;
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             timeout: 500,
             reconnect: true,
             reconnectionAttempts: 2,
@@ -918,11 +1022,12 @@ describe('Client', function () {
         setTimeout(function () {
             chai_1.expect(connectSpy.callCount).to.be.equal(2);
             chai_1.expect(errorCount).to.be.equal(1);
+            subscriptionsClient.close();
             done();
         }, 1500);
     });
     it('should stop trying to reconnect to the server if it does not receives the ack', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             timeout: 500,
             reconnect: true,
             reconnectionAttempts: 2,
@@ -938,11 +1043,12 @@ describe('Client', function () {
         });
         setTimeout(function () {
             chai_1.expect(connectSpy.callCount).to.be.equal(2);
+            subscriptionsClient.close();
             done();
         }, 1500);
     });
     it('should keep trying to reconnect if receives the ack from the server', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             timeout: 500,
             reconnect: true,
             reconnectionAttempts: 2,
@@ -963,6 +1069,7 @@ describe('Client', function () {
             chai_1.expect(connections).to.be.greaterThan(3);
             chai_1.expect(connectSpy.callCount).to.be.greaterThan(2);
             wsServer.close();
+            subscriptionsClient.close();
             done();
         }, 1900);
     });
@@ -982,6 +1089,7 @@ describe('Client', function () {
         setTimeout(function () {
             chai_1.expect(wasKAReceived).to.equal(true);
             chai_1.expect(subscriptionsClient.status).to.equal(WebSocket.CLOSED);
+            subscriptionsClient.close();
             done();
         }, 1200);
     });
@@ -1000,11 +1108,12 @@ describe('Client', function () {
         setTimeout(function () {
             chai_1.expect(checkConnectionSpy.callCount).to.be.equal(receivedKeepAlive);
             chai_1.expect(subscriptionsClient.status).to.be.equal(subscriptionsClient.client.OPEN);
+            subscriptionsClient.close();
             done();
         }, 1300);
     });
     it('should take care of invalid message received', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
         var originalOnMessage = subscriptionsClient.client.onmessage;
         var dataToSend = {
             data: JSON.stringify({ type: 'invalid' }),
@@ -1012,10 +1121,11 @@ describe('Client', function () {
         chai_1.expect(function () {
             originalOnMessage.call(subscriptionsClient, dataToSend)();
         }).to.throw('Invalid message type!');
+        subscriptionsClient.close();
         done();
     });
     it('should throw if received data is not JSON-parseable', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
         var originalOnMessage = subscriptionsClient.client.onmessage;
         var dataToSend = {
             data: 'invalid',
@@ -1023,11 +1133,14 @@ describe('Client', function () {
         chai_1.expect(function () {
             originalOnMessage.call(subscriptionsClient, dataToSend)();
         }).to.throw('Message must be JSON-parseable. Got: invalid');
+        subscriptionsClient.close();
         done();
     });
     it('should delete operation when receive a GQL_COMPLETE', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/");
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/");
         subscriptionsClient.operations['1'] = {
+            processed: true,
+            started: true,
             options: {
                 query: 'invalid',
             },
@@ -1041,10 +1154,11 @@ describe('Client', function () {
         chai_1.expect(subscriptionsClient.operations).to.have.property('1');
         originalOnMessage(dataToSend);
         chai_1.expect(subscriptionsClient.operations).to.not.have.property('1');
+        subscriptionsClient.close();
         done();
     });
     it('should force close the connection without tryReconnect', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             reconnect: true,
             reconnectionAttempts: 1,
         });
@@ -1073,11 +1187,12 @@ describe('Client', function () {
             chai_1.expect(receivedConnecitonTerminate).to.be.equal(true);
             chai_1.expect(tryReconnectSpy.callCount).to.be.equal(0);
             chai_1.expect(subscriptionsClient.status).to.be.equal(WebSocket.CLOSED);
+            subscriptionsClient.close();
             done();
         }, 500);
     });
     it('should close the connection without sent connection terminate and reconnect', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             reconnect: true,
             reconnectionAttempts: 1,
         });
@@ -1106,11 +1221,12 @@ describe('Client', function () {
             chai_1.expect(tryReconnectSpy.callCount).to.be.equal(1);
             chai_1.expect(subscriptionsClient.status).to.be.equal(WebSocket.OPEN);
             chai_1.expect(receivedConnecitonTerminate).to.be.equal(false);
+            subscriptionsClient.close();
             done();
         }, 500);
     });
     it('should close the connection after inactivityTimeout and zero active subscriptions', function (done) {
-        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + RAW_TEST_PORT + "/", {
+        var subscriptionsClient = new client_1.SubscriptionClient("ws://localhost:" + rawTestPort + "/", {
             inactivityTimeout: 100,
         });
         var sub = subscriptionsClient.request({
@@ -1127,6 +1243,7 @@ describe('Client', function () {
                 chai_1.expect(Object.keys(subscriptionsClient.operations).length).to.be.equal(0);
                 setTimeout(function () {
                     chai_1.expect(subscriptionsClient.status).to.be.equal(WebSocket.CLOSED);
+                    subscriptionsClient.close();
                     done();
                 }, 101);
             }, 50);
@@ -1200,6 +1317,7 @@ describe('Server', function () {
                 error: function (err) {
                     errorMessage = err.message;
                     chai_1.expect(errorMessage).to.contain('Missing schema information');
+                    client.close();
                     done();
                 },
                 complete: function () {
@@ -1241,6 +1359,7 @@ describe('Server', function () {
                 },
                 complete: function () {
                     chai_1.expect(msgCnt).to.equals(1);
+                    client.close();
                     done();
                 },
             });
@@ -1275,6 +1394,7 @@ describe('Server', function () {
                 },
                 complete: function () {
                     chai_1.expect(msgCnt).to.equals(1);
+                    client.close();
                     done();
                 },
             });
@@ -1292,6 +1412,7 @@ describe('Server', function () {
         });
         var client = new client_1.SubscriptionClient("ws://localhost:" + SERVER_EXECUTOR_TESTS_PORT + "/");
         client.onDisconnected(function () {
+            client.close();
             done();
         });
         client.onConnected(function () {
@@ -1334,12 +1455,14 @@ describe('Server', function () {
                     hasValue = true;
                 },
                 error: function (err) {
+                    client.close();
                     done(new Error('unexpected error from subscribe'));
                 },
                 complete: function () {
                     if (false === hasValue) {
                         return done(new Error('No value recived from observable'));
                     }
+                    client.close();
                     done();
                 },
             });
@@ -1391,6 +1514,7 @@ describe('Server', function () {
                     else {
                         chai_1.expect(res.data).to.deep.equal({ testString: 'value' });
                     }
+                    client.close();
                     done();
                 },
             });
@@ -1400,6 +1524,7 @@ describe('Server', function () {
         var spy = sinon.spy();
         var httpServerForError = http_1.createServer(notFoundRequestListener);
         httpServerForError.listen(ERROR_TEST_PORT);
+        var client;
         new server_1.SubscriptionServer({
             schema: schema,
             execute: graphql_1.execute,
@@ -1409,18 +1534,20 @@ describe('Server', function () {
                     setTimeout(function () {
                         chai_1.assert(spy.calledOnce);
                         httpServerForError.close();
+                        client.close();
                         done();
                     }, 500);
                 }, 100);
             },
         }, { server: httpServerForError });
-        var client = new client_1.SubscriptionClient("ws://localhost:" + ERROR_TEST_PORT + "/");
+        client = new client_1.SubscriptionClient("ws://localhost:" + ERROR_TEST_PORT + "/");
         client.onDisconnected(spy);
     });
     it('should trigger onConnect when client connects and validated', function (done) {
-        new client_1.SubscriptionClient("ws://localhost:" + EVENTS_TEST_PORT + "/");
+        var client = new client_1.SubscriptionClient("ws://localhost:" + EVENTS_TEST_PORT + "/");
         setTimeout(function () {
             chai_1.assert(eventsOptions.onConnect.calledOnce);
+            client.close();
             done();
         }, 200);
     });
@@ -1428,20 +1555,22 @@ describe('Server', function () {
         var connectionParams = {
             test: true,
         };
-        new client_1.SubscriptionClient("ws://localhost:" + EVENTS_TEST_PORT + "/", {
+        var client = new client_1.SubscriptionClient("ws://localhost:" + EVENTS_TEST_PORT + "/", {
             connectionParams: connectionParams,
         });
         setTimeout(function () {
             chai_1.assert(eventsOptions.onConnect.calledOnce);
             chai_1.expect(JSON.stringify(eventsOptions.onConnect.getCall(0).args[0])).to.equal(JSON.stringify(connectionParams));
+            client.close();
             done();
         }, 200);
     });
     it('should trigger onConnect with the request available in ConnectionContext', function (done) {
-        new client_1.SubscriptionClient("ws://localhost:" + EVENTS_TEST_PORT + "/");
+        var client = new client_1.SubscriptionClient("ws://localhost:" + EVENTS_TEST_PORT + "/");
         setTimeout(function () {
             chai_1.assert(eventsOptions.onConnect.calledOnce);
             chai_1.expect(eventsOptions.onConnect.getCall(0).args[2].request).to.be.an.instanceof(http_1.IncomingMessage);
+            client.close();
             done();
         }, 200);
     });
@@ -1487,6 +1616,7 @@ describe('Server', function () {
         }, 100);
         setTimeout(function () {
             chai_1.assert(eventsOptions.onDisconnect.calledOnce);
+            client.close();
             done();
         }, 200);
     });
@@ -1498,6 +1628,7 @@ describe('Server', function () {
         setTimeout(function () {
             chai_1.assert(eventsOptions.onDisconnect.calledOnce);
             chai_1.expect(eventsOptions.onConnect.getCall(0).args[1]).to.not.be.undefined;
+            client.close();
             done();
         }, 200);
     });
@@ -1516,6 +1647,7 @@ describe('Server', function () {
         }, 500);
         setTimeout(function () {
             chai_1.assert(spy.calledOnce);
+            client.close();
             done();
         }, 1000);
     });
@@ -1536,6 +1668,7 @@ describe('Server', function () {
         });
         setTimeout(function () {
             chai_1.assert(eventsOptions.onOperation.calledOnce);
+            client.close();
             done();
         }, 200);
     });
@@ -1551,6 +1684,7 @@ describe('Server', function () {
             next: function (result) {
                 if (result.errors) {
                     sub.unsubscribe();
+                    client.close();
                     chai_1.assert(false);
                     done();
                 }
@@ -1558,6 +1692,7 @@ describe('Server', function () {
                     sub.unsubscribe();
                     setTimeout(function () {
                         chai_1.assert(eventsOptions.onOperationComplete.calledOnce);
+                        client.close();
                         done();
                     }, 200);
                 }
@@ -1623,6 +1758,7 @@ describe('Server', function () {
             chai_1.expect(numResults).to.equals(1);
             client1.unsubscribeAll();
             chai_1.expect(numResults1).to.equals(1);
+            client.close();
             done();
         }, 400);
     });
@@ -1634,6 +1770,7 @@ describe('Server', function () {
                 chai_1.assert.isTrue(messageData.type === message_types_1.default.GQL_DATA
                     || messageData.type === message_types_1.default.GQL_COMPLETE);
                 if (messageData.type === message_types_1.default.GQL_COMPLETE) {
+                    client1.close();
                     done();
                     return;
                 }
@@ -1700,6 +1837,7 @@ describe('Server', function () {
         }, 200);
         setTimeout(function () {
             chai_1.assert.equal(numTriggers, 2);
+            client3.close();
             done();
         }, 300);
     });
@@ -1720,6 +1858,7 @@ describe('Server', function () {
                     chai_1.assert.property(result.data, 'context');
                     chai_1.assert.equal(result.data.context, CTX);
                 }
+                client3.close();
                 done();
             },
         });
@@ -1737,6 +1876,7 @@ describe('Server', function () {
             client.close();
             chai_1.assert(onOperationSpy.calledOnce);
             chai_1.expect(onOperationSpy.getCall(0).args[2]).to.not.be.undefined;
+            client.close();
             done();
         }, 100);
     });
@@ -1815,6 +1955,7 @@ describe('Server', function () {
             next: function () { return chai_1.assert(false); },
             error: function () {
                 client.unsubscribeAll();
+                client.close();
                 done();
             },
         });
@@ -1911,6 +2052,7 @@ describe('Client<->Server Flow', function () {
                                         chai_1.expect(res.errors).to.equals(undefined);
                                         chai_1.expect(res.data.testString).to.eq('value');
                                         sub2.unsubscribe();
+                                        client.close();
                                         done();
                                     },
                                 });
@@ -1950,6 +2092,7 @@ describe('Client<->Server Flow', function () {
                                 chai_1.expect(res.errors).to.equals(undefined);
                                 chai_1.expect(res.data.testString).to.eq('value');
                                 sub.unsubscribe();
+                                client.close();
                                 done();
                             },
                         });
@@ -1988,6 +2131,7 @@ describe('Client<->Server Flow', function () {
                                 chai_1.expect(res.data).to.eq(undefined);
                                 chai_1.expect(res.errors[0].message).to.eq('Cannot query field "invalid" on type "Query".');
                                 sub.unsubscribe();
+                                client.close();
                                 done();
                             },
                         });
@@ -2193,6 +2337,7 @@ describe('Client<->Server Flow', function () {
                                         chai_1.expect(s2Res.data.user.id).to.eq('1');
                                         chai_1.expect(Object.keys(client['operations']).length).to.eq(1);
                                         chai_1.expect(firstSubscriptionSpy.callCount).to.eq(1);
+                                        client.close();
                                         done();
                                     },
                                 });
@@ -2241,6 +2386,7 @@ describe('Client<->Server Flow', function () {
         }, 50);
         setTimeout(function () {
             chai_1.expect(numTriggers).equal(1);
+            client.close();
             done();
         }, 200);
     });

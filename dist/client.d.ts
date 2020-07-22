@@ -21,6 +21,8 @@ export declare type FormatedError = Error & {
     originalError?: any;
 };
 export interface Operation {
+    processed: boolean;
+    started: boolean;
     options: OperationOptions;
     handler: (error: Error[], result?: any) => void;
 }
@@ -52,7 +54,7 @@ export declare class SubscriptionClient {
     private nextOperationId;
     private connectionParams;
     private wsTimeout;
-    private unsentMessagesQueue;
+    private ready;
     private reconnect;
     private reconnecting;
     private reconnectionAttempts;
@@ -87,6 +89,7 @@ export declare class SubscriptionClient {
     use(middlewares: Middleware[]): SubscriptionClient;
     private getConnectionParams;
     private executeOperation;
+    private startOperation;
     private getObserver;
     private createMaxConnectTimeGenerator;
     private clearCheckConnectionInterval;
@@ -101,7 +104,6 @@ export declare class SubscriptionClient {
     private sendMessageRaw;
     private generateOperationId;
     private tryReconnect;
-    private flushUnsentMessagesQueue;
     private checkConnection;
     private checkMaxConnectTimeout;
     private connect;

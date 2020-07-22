@@ -80,7 +80,7 @@ var SubscriptionClient = (function () {
         this.operations = {};
         this.nextOperationId = 0;
         this.wsTimeout = timeout;
-        this.unsentMessagesQueue = [];
+        this.ready = false;
         this.reconnect = reconnect;
         this.reconnecting = false;
         this.reconnectionAttempts = reconnectionAttempts;
@@ -108,8 +108,10 @@ var SubscriptionClient = (function () {
         configurable: true
     });
     SubscriptionClient.prototype.close = function (isForced, closedByUser) {
+        var _this = this;
         if (isForced === void 0) { isForced = true; }
         if (closedByUser === void 0) { closedByUser = true; }
+        this.ready = false;
         this.clearInactivityTimeout();
         if (this.client !== null) {
             this.closedByUser = closedByUser;
@@ -127,6 +129,11 @@ var SubscriptionClient = (function () {
                 this.tryReconnect();
             }
         }
+        Object.keys(this.operations).forEach(function (opId) {
+            var operation = _this.operations[opId];
+            var processed = operation.processed, options = operation.options, handler = operation.handler;
+            _this.operations[opId] = { processed: processed, started: false, options: options, handler: handler };
+        });
     };
     SubscriptionClient.prototype.request = function (request) {
         var _a;
@@ -255,13 +262,13 @@ var SubscriptionClient = (function () {
             this.connect();
         }
         var opId = this.generateOperationId();
-        this.operations[opId] = { options: options, handler: handler };
+        this.operations[opId] = { processed: false, started: false, options: options, handler: handler };
         this.applyMiddlewares(options)
             .then(function (processedOptions) {
             _this.checkOperationOptions(processedOptions, handler);
             if (_this.operations[opId]) {
-                _this.operations[opId] = { options: processedOptions, handler: handler };
-                _this.sendMessage(opId, message_types_1.default.GQL_START, processedOptions);
+                _this.operations[opId] = { processed: true, started: false, options: processedOptions, handler: handler };
+                _this.startOperation(opId);
             }
         })
             .catch(function (error) {
@@ -269,6 +276,13 @@ var SubscriptionClient = (function () {
             handler(_this.formatErrors(error));
         });
         return opId;
+    };
+    SubscriptionClient.prototype.startOperation = function (opId) {
+        var _a = this.operations[opId], processed = _a.processed, started = _a.started, options = _a.options, handler = _a.handler;
+        if (this.ready && processed && !started) {
+            this.operations[opId] = { processed: processed, started: true, options: options, handler: handler };
+            this.sendMessage(opId, message_types_1.default.GQL_START, options);
+        }
     };
     SubscriptionClient.prototype.getObserver = function (observerOrNext, error, complete) {
         if (typeof observerOrNext === 'function') {
@@ -365,25 +379,19 @@ var SubscriptionClient = (function () {
         this.sendMessageRaw(this.buildMessage(id, type, payload));
     };
     SubscriptionClient.prototype.sendMessageRaw = function (message) {
-        switch (this.status) {
-            case this.wsImpl.OPEN:
-                var serializedMessage = JSON.stringify(message);
-                try {
-                    JSON.parse(serializedMessage);
-                }
-                catch (e) {
-                    this.eventEmitter.emit('error', new Error("Message must be JSON-serializable. Got: " + message));
-                }
-                this.client.send(serializedMessage);
-                break;
-            case this.wsImpl.CONNECTING:
-                this.unsentMessagesQueue.push(message);
-                break;
-            default:
-                if (!this.reconnecting) {
-                    this.eventEmitter.emit('error', new Error('A message was not sent because socket is not connected, is closing or ' +
-                        'is already closed. Message was: ' + JSON.stringify(message)));
-                }
+        if (this.status === this.wsImpl.OPEN) {
+            var serializedMessage = JSON.stringify(message);
+            try {
+                JSON.parse(serializedMessage);
+            }
+            catch (e) {
+                this.eventEmitter.emit('error', new Error("Message must be JSON-serializable. Got: " + message));
+            }
+            this.client.send(serializedMessage);
+        }
+        else if (!this.reconnecting) {
+            this.eventEmitter.emit('error', new Error('A message was not sent because socket is not connected, is closing or ' +
+                'is already closed. Message was: ' + JSON.stringify(message)));
         }
     };
     SubscriptionClient.prototype.generateOperationId = function () {
@@ -394,24 +402,12 @@ var SubscriptionClient = (function () {
         if (!this.reconnect || this.backoff.attempts >= this.reconnectionAttempts) {
             return;
         }
-        if (!this.reconnecting) {
-            Object.keys(this.operations).forEach(function (key) {
-                _this.unsentMessagesQueue.push(_this.buildMessage(key, message_types_1.default.GQL_START, _this.operations[key].options));
-            });
-            this.reconnecting = true;
-        }
+        this.reconnecting = true;
         this.clearTryReconnectTimeout();
         var delay = this.backoff.duration();
         this.tryReconnectTimeoutId = setTimeout(function () {
             _this.connect();
         }, delay);
-    };
-    SubscriptionClient.prototype.flushUnsentMessagesQueue = function () {
-        var _this = this;
-        this.unsentMessagesQueue.forEach(function (message) {
-            _this.sendMessageRaw(message);
-        });
-        this.unsentMessagesQueue = [];
     };
     SubscriptionClient.prototype.checkConnection = function () {
         if (this.wasKeepAliveReceived) {
@@ -419,7 +415,6 @@ var SubscriptionClient = (function () {
             return;
         }
         if (!this.reconnecting) {
-            console.warn('keep alive not received. Closing connection');
             this.close(false, true);
         }
     };
@@ -453,25 +448,21 @@ var SubscriptionClient = (function () {
                     case 2:
                         connectionParams = _a.sent();
                         this.sendMessage(undefined, message_types_1.default.GQL_CONNECTION_INIT, connectionParams);
-                        this.flushUnsentMessagesQueue();
                         return [3, 4];
                     case 3:
                         error_1 = _a.sent();
                         this.sendMessage(undefined, message_types_1.default.GQL_CONNECTION_ERROR, error_1);
-                        this.flushUnsentMessagesQueue();
                         return [3, 4];
                     case 4: return [2];
                 }
             });
         }); };
         this.client.onclose = function (closeEvent) {
-            console.warn('socket closed with code', closeEvent.code);
             if (!_this.closedByUser) {
                 _this.close(false, false);
             }
         };
         this.client.onerror = function (err) {
-            console.warn('error from websocket', JSON.stringify(err));
             _this.eventEmitter.emit('error', err);
         };
         this.client.onmessage = function (_a) {
@@ -480,6 +471,7 @@ var SubscriptionClient = (function () {
         };
     };
     SubscriptionClient.prototype.processReceivedData = function (receivedData) {
+        var _this = this;
         var parsedMessage;
         var opId;
         try {
@@ -504,9 +496,13 @@ var SubscriptionClient = (function () {
                 break;
             case message_types_1.default.GQL_CONNECTION_ACK:
                 this.eventEmitter.emit(this.reconnecting ? 'reconnected' : 'connected');
+                this.ready = true;
                 this.reconnecting = false;
                 this.backoff.reset();
                 this.maxConnectTimeGenerator.reset();
+                Object.keys(this.operations).forEach(function (key) {
+                    _this.startOperation(key);
+                });
                 if (this.connectionCallback) {
                     this.connectionCallback();
                 }
