@@ -94,11 +94,9 @@ export interface ServerOptions {
 const isWebSocketServer = (socket: any) => socket.on;
 
 function noop() {
-  console.log('sending ping')
 }
 
 function heartbeat() {
-  console.log('received pon')
 }
 
 

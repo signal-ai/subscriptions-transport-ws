@@ -12,10 +12,8 @@ var is_subscriptions_1 = require("./utils/is-subscriptions");
 var parse_legacy_protocol_1 = require("./legacy/parse-legacy-protocol");
 var isWebSocketServer = function (socket) { return socket.on; };
 function noop() {
-    console.log('sending ping');
 }
 function heartbeat() {
-    console.log('received pon');
 }
 var SubscriptionServer = (function () {
     function SubscriptionServer(options, socketOptionsOrServer) {
